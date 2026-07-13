@@ -67,7 +67,7 @@
         </div>
 
         @for (probe of probeDefinitions; track probe.id) {
-          <article class="matrix-row" role="row">
+          <article class="matrix-row" role="row" [attr.data-probe]="probe.id">
             <div class="technology-cell" role="rowheader">
               <span class="technology-index">0{{ $index + 1 }}</span>
               <div>
@@ -79,7 +79,12 @@
             @let outside = resultFor(hostResults(), probe.id);
             <div class="result-cell" role="cell">
               <span class="mobile-column-label">Outside iframe</span>
-              <span class="status" [class]="'status status-' + outside.status">
+              <span
+                class="status"
+                [class]="'status status-' + outside.status"
+                [attr.data-testid]="probe.id + '-outside-status'"
+                [attr.data-status]="outside.status"
+              >
                 {{ statusLabel(outside.status) }}
               </span>
               <strong>{{ outside.summary }}</strong>
@@ -102,7 +107,12 @@
             @let inside = resultFor(frameResults(), probe.id);
             <div class="result-cell" role="cell">
               <span class="mobile-column-label">Inside iframe</span>
-              <span class="status" [class]="'status status-' + inside.status">
+              <span
+                class="status"
+                [class]="'status status-' + inside.status"
+                [attr.data-testid]="probe.id + '-inside-status'"
+                [attr.data-status]="inside.status"
+              >
                 {{ statusLabel(inside.status) }}
               </span>
               <strong>{{ inside.summary }}</strong>
@@ -125,10 +135,17 @@
             @let comparison = comparisonFor(probe.id);
             <div class="comparison-cell" role="cell">
               <span class="mobile-column-label">Comparison</span>
-              <span class="status" [class]="'status status-' + comparison.tone">
-                {{ comparison.label }}
+              <span
+                class="status"
+                [class]="'status status-' + comparison.tone"
+                [attr.data-testid]="probe.id + '-comparison-status'"
+                [attr.data-status]="comparison.tone"
+              >
+                {{ statusLabel(comparison.tone) }}
               </span>
-              <p>{{ comparison.detail }}</p>
+              <p>
+                <strong>{{ comparison.label }}:</strong> {{ comparison.detail }}
+              </p>
             </div>
           </article>
         }
@@ -185,7 +202,12 @@
           <p class="section-kicker">Observed context</p>
           <h2 id="frame-title">Embedded runner</h2>
         </div>
-        <span class="connection-state" [class.connection-state-ready]="frameReady()">
+        <span
+          class="connection-state"
+          data-testid="iframe-connection-status"
+          [attr.data-status]="frameReady() ? 'connected' : 'connecting'"
+          [class.connection-state-ready]="frameReady()"
+        >
           <i aria-hidden="true"></i>
           {{ frameReady() ? 'Connected' : 'Connecting' }}
         </span>
@@ -216,12 +238,17 @@
     <section class="runner-results" aria-label="Iframe probe results">
       @for (probe of probeDefinitions; track probe.id) {
         @let result = resultFor(auxiliaryResults(), probe.id);
-        <article>
+        <article [attr.data-probe]="probe.id">
           <div>
             <h2>{{ probe.label }}</h2>
             <p>{{ result.summary }}</p>
           </div>
-          <span class="status" [class]="'status status-' + result.status">
+          <span
+            class="status"
+            [class]="'status status-' + result.status"
+            [attr.data-testid]="probe.id + '-frame-status'"
+            [attr.data-status]="result.status"
+          >
             {{ statusLabel(result.status) }}
           </span>
         </article>
