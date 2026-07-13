@@ -420,9 +420,19 @@ summary {
   cursor: pointer;
 }
 
+.diagnostics-metadata {
+  margin: 8px 0;
+}
+
+.diagnostics-metadata dd {
+  margin: 2px 0 7px;
+  overflow-wrap: anywhere;
+}
+
 details ul {
   margin: 8px 0 0;
   padding-left: 18px;
+  overflow-wrap: anywhere;
 }
 
 .mobile-column-label {

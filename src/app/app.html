@@ -86,6 +86,7 @@
                 [class]="'status status-' + outside.status"
                 [attr.data-testid]="probe.id + '-outside-status'"
                 [attr.data-status]="outside.status"
+                [attr.title]="statusDescription(outside.status)"
               >
                 {{ statusLabel(outside.status) }}
               </span>
@@ -94,14 +95,68 @@
               @if (outside.durationMs !== undefined) {
                 <small>{{ outside.durationMs }} ms</small>
               }
-              @if (outside.diagnostics.length) {
-                <details>
-                  <summary>Diagnostics</summary>
-                  <ul>
-                    @for (diagnostic of outside.diagnostics; track diagnostic) {
-                      <li>{{ diagnostic }}</li>
+              @if (outside.status !== 'idle' && outside.status !== 'running') {
+                <details class="diagnostics" [attr.data-testid]="probe.id + '-outside-diagnostics'">
+                  <summary>Diagnostics: outside iframe</summary>
+                  <dl class="diagnostics-metadata">
+                    <div>
+                      <dt>Probe</dt>
+                      <dd>
+                        <code>{{ probe.id }}</code>
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Context</dt>
+                      <dd>Top-level page</dd>
+                    </div>
+                    <div>
+                      <dt>Origin</dt>
+                      <dd>
+                        <code>{{ locationOrigin }}</code>
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Outcome</dt>
+                      <dd>
+                        {{ statusLabel(outside.status) }}<br />
+                        {{ statusDescription(outside.status) }}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Code</dt>
+                      <dd>
+                        <code>{{ outside.status }}</code>
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Completed</dt>
+                      <dd>
+                        <time [attr.datetime]="outside.checkedAt">
+                          {{ formatTimestamp(outside.checkedAt) }}
+                        </time>
+                      </dd>
+                    </div>
+                    @if (outside.durationMs !== undefined) {
+                      <div>
+                        <dt>Duration</dt>
+                        <dd>{{ outside.durationMs }} ms</dd>
+                      </div>
                     }
-                  </ul>
+                    <div>
+                      <dt>Target</dt>
+                      <dd>{{ diagnosticTarget(probe.id) }}</dd>
+                    </div>
+                  </dl>
+                  <p class="diagnostics-log-heading">Evidence</p>
+                  @if (outside.diagnostics.length) {
+                    <ul class="diagnostics-log">
+                      @for (diagnostic of outside.diagnostics; track diagnostic) {
+                        <li>{{ diagnostic }}</li>
+                      }
+                    </ul>
+                  } @else {
+                    <p class="diagnostics-empty">No additional browser messages were reported.</p>
+                  }
                 </details>
               }
             </div>
@@ -114,6 +169,7 @@
                 [class]="'status status-' + inside.status"
                 [attr.data-testid]="probe.id + '-inside-status'"
                 [attr.data-status]="inside.status"
+                [attr.title]="statusDescription(inside.status)"
               >
                 {{ statusLabel(inside.status) }}
               </span>
@@ -122,14 +178,68 @@
               @if (inside.durationMs !== undefined) {
                 <small>{{ inside.durationMs }} ms</small>
               }
-              @if (inside.diagnostics.length) {
-                <details>
-                  <summary>Diagnostics</summary>
-                  <ul>
-                    @for (diagnostic of inside.diagnostics; track diagnostic) {
-                      <li>{{ diagnostic }}</li>
+              @if (inside.status !== 'idle' && inside.status !== 'running') {
+                <details class="diagnostics" [attr.data-testid]="probe.id + '-inside-diagnostics'">
+                  <summary>Diagnostics: inside iframe</summary>
+                  <dl class="diagnostics-metadata">
+                    <div>
+                      <dt>Probe</dt>
+                      <dd>
+                        <code>{{ probe.id }}</code>
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Context</dt>
+                      <dd>Embedded iframe</dd>
+                    </div>
+                    <div>
+                      <dt>Origin</dt>
+                      <dd>
+                        <code>{{ frameOrigin() }}</code>
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Outcome</dt>
+                      <dd>
+                        {{ statusLabel(inside.status) }}<br />
+                        {{ statusDescription(inside.status) }}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Code</dt>
+                      <dd>
+                        <code>{{ inside.status }}</code>
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Completed</dt>
+                      <dd>
+                        <time [attr.datetime]="inside.checkedAt">
+                          {{ formatTimestamp(inside.checkedAt) }}
+                        </time>
+                      </dd>
+                    </div>
+                    @if (inside.durationMs !== undefined) {
+                      <div>
+                        <dt>Duration</dt>
+                        <dd>{{ inside.durationMs }} ms</dd>
+                      </div>
                     }
-                  </ul>
+                    <div>
+                      <dt>Target</dt>
+                      <dd>{{ diagnosticTarget(probe.id) }}</dd>
+                    </div>
+                  </dl>
+                  <p class="diagnostics-log-heading">Evidence</p>
+                  @if (inside.diagnostics.length) {
+                    <ul class="diagnostics-log">
+                      @for (diagnostic of inside.diagnostics; track diagnostic) {
+                        <li>{{ diagnostic }}</li>
+                      }
+                    </ul>
+                  } @else {
+                    <p class="diagnostics-empty">No additional browser messages were reported.</p>
+                  }
                 </details>
               }
             </div>
@@ -142,6 +252,7 @@
                 [class]="'status status-' + comparison.tone"
                 [attr.data-testid]="probe.id + '-comparison-status'"
                 [attr.data-status]="comparison.tone"
+                [attr.title]="statusDescription(comparison.tone)"
               >
                 {{ statusLabel(comparison.tone) }}
               </span>
@@ -252,6 +363,7 @@
             [class]="'status status-' + result.status"
             [attr.data-testid]="probe.id + '-frame-status'"
             [attr.data-status]="result.status"
+            [attr.title]="statusDescription(result.status)"
           >
             {{ statusLabel(result.status) }}
           </span>

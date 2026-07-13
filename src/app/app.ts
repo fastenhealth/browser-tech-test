@@ -244,6 +244,22 @@ export class App implements OnInit {
     return STATUS_LABELS[status];
   }
 
+  protected statusDescription(status: ProbeStatus): string {
+    return STATUS_DESCRIPTIONS[status];
+  }
+
+  protected formatTimestamp(timestamp: string): string {
+    const date = new Date(timestamp);
+    return Number.isNaN(date.getTime()) ? timestamp : DIAGNOSTIC_TIME_FORMATTER.format(date);
+  }
+
+  protected diagnosticTarget(id: ProbeId): string {
+    if (id === 'websocket') {
+      return `Exact echo response from ${this.appliedWebSocketUrl()}`;
+    }
+    return DIAGNOSTIC_TARGETS[id];
+  }
+
   protected comparisonFor(id: ProbeId): Comparison {
     const outside = this.hostResults()[id];
     const inside = this.frameResults()[id];
@@ -550,6 +566,33 @@ const STATUS_LABELS: Record<ProbeStatus, string> = {
   failed: 'Failed',
   unsupported: 'Unsupported',
   inconclusive: 'Inconclusive',
+};
+
+const STATUS_DESCRIPTIONS: Record<ProbeStatus, string> = {
+  idle: 'This test has not been run yet.',
+  running: 'This test is currently in progress.',
+  passed: 'The operation completed successfully in this browser context.',
+  partitioned: 'The iframe is isolated from the matching first-party value.',
+  shared: 'The iframe can access the matching first-party value.',
+  blocked: 'The browser prevented access to a feature required by this test.',
+  failed: 'The operation did not complete successfully.',
+  unsupported: 'This browser does not support a feature required by this test.',
+  inconclusive: 'The test completed without producing a definitive result.',
+};
+
+const DIAGNOSTIC_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
+  year: 'numeric',
+  month: 'short',
+  day: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+});
+
+const DIAGNOSTIC_TARGETS: Record<Exclude<ProbeId, 'websocket'>, string> = {
+  'partitioned-cookie':
+    'Secure partitioned cookie write, read, removal, and first-party seed visibility',
+  'local-storage': 'Local storage write, read, overwrite, removal, and first-party seed visibility',
 };
 
 function readMode(): AppMode {

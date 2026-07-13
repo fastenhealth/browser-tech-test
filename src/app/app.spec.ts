@@ -1,5 +1,6 @@
 import { TestBed } from '@angular/core/testing';
 import { App } from './app';
+import { createIdleResults, ProbeResultMap } from './browser-probes';
 
 describe('App', () => {
   beforeEach(async () => {
@@ -34,5 +35,72 @@ describe('App', () => {
     expect(outsideStatus?.getAttribute('data-status')).toBe('idle');
     expect(comparisonStatus?.textContent?.trim()).toBe('Not run');
     expect(comparisonStatus?.getAttribute('data-status')).toBe('idle');
+  });
+
+  it('should explain probe statuses with hover tooltips', async () => {
+    const fixture = TestBed.createComponent(App);
+    await fixture.whenStable();
+    const compiled = fixture.nativeElement as HTMLElement;
+    const statuses = compiled.querySelectorAll<HTMLElement>('.status');
+
+    expect(statuses).toHaveLength(9);
+    statuses.forEach((status) => {
+      expect(status.title).toBe('This test has not been run yet.');
+    });
+  });
+
+  it('should show detailed diagnostics for completed probe results', async () => {
+    const fixture = TestBed.createComponent(App);
+    await fixture.whenStable();
+    const compiled = fixture.nativeElement as HTMLElement;
+    const results = createIdleResults();
+
+    results.websocket = {
+      ...results.websocket,
+      status: 'failed',
+      summary: 'WebSocket connection failed',
+      detail: 'The endpoint rejected the connection.',
+      checkedAt: '2026-07-13T12:34:56.000Z',
+      durationMs: 125.4,
+      diagnostics: ['Connection closed with code 1006.'],
+    };
+    results['partitioned-cookie'] = {
+      ...results['partitioned-cookie'],
+      status: 'blocked',
+      summary: 'HTTPS required',
+      detail: 'Secure cookies cannot be tested in this context.',
+      checkedAt: '2026-07-13T12:34:57.000Z',
+      durationMs: 0.2,
+      diagnostics: [],
+    };
+    (
+      fixture.componentInstance as unknown as {
+        hostResults: { set(results: ProbeResultMap): void };
+      }
+    ).hostResults.set(results);
+    fixture.detectChanges();
+
+    const diagnostics = compiled.querySelector<HTMLDetailsElement>(
+      '[data-testid="websocket-outside-diagnostics"]',
+    );
+
+    expect(diagnostics).not.toBeNull();
+    expect(diagnostics?.open).toBe(false);
+    expect(diagnostics?.textContent).toContain('Top-level page');
+    expect(diagnostics?.textContent).toContain(window.location.origin);
+    expect(diagnostics?.textContent).toContain('Failed');
+    expect(diagnostics?.textContent).toContain('failed');
+    expect(diagnostics?.textContent).toContain('125.4 ms');
+    expect(diagnostics?.textContent).toContain('Exact echo response from');
+    expect(diagnostics?.textContent).toContain('Connection closed with code 1006.');
+    expect(diagnostics?.querySelector('time')?.dateTime).toBe('2026-07-13T12:34:56.000Z');
+
+    const emptyDiagnostics = compiled.querySelector<HTMLDetailsElement>(
+      '[data-testid="partitioned-cookie-outside-diagnostics"]',
+    );
+    expect(emptyDiagnostics?.textContent).toContain('Secure partitioned cookie write');
+    expect(emptyDiagnostics?.textContent).toContain(
+      'No additional browser messages were reported.',
+    );
   });
 });
