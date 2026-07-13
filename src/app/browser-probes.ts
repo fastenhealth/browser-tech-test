@@ -1,6 +1,6 @@
 import { Inject, Injectable, InjectionToken } from '@angular/core';
 
-export type ProbeId = 'websocket' | 'partitioned-cookie' | 'local-storage';
+export type ProbeId = 'websocket' | 'third-party-cookie' | 'partitioned-cookie' | 'local-storage';
 
 export type ProbeStatus =
   | 'idle'
@@ -25,13 +25,21 @@ export interface ProbeResult {
 
 export type ProbeResultMap = Record<ProbeId, ProbeResult>;
 
+export interface ProbeRunContext {
+  kind: 'top-level' | 'embedded';
+  isCrossSite: boolean;
+}
+
 export interface PrimeArtifacts {
   runId: string;
   cookieName: string;
   cookieValue: string;
+  thirdPartyCookieName: string;
+  thirdPartyCookieValue: string;
   storageKey: string;
   storageValue: string;
   cookiePrepared: boolean;
+  thirdPartyCookiePrepared: boolean;
   storagePrepared: boolean;
   errors: string[];
 }
@@ -47,6 +55,12 @@ export const PROBE_DEFINITIONS: readonly ProbeDefinition[] = [
     id: 'websocket',
     label: 'WebSocket',
     description: 'Connects to a secure endpoint and verifies an exact echo.',
+  },
+  {
+    id: 'third-party-cookie',
+    label: 'Third-party cookie',
+    description:
+      'Checks whether a JavaScript-visible unpartitioned cookie is shared from a first-party control into an iframe.',
   },
   {
     id: 'partitioned-cookie',
@@ -80,6 +94,7 @@ function createResults(status: 'idle' | 'running'): ProbeResultMap {
 
   return {
     websocket: createResult('websocket'),
+    'third-party-cookie': createResult('third-party-cookie'),
     'partitioned-cookie': createResult('partitioned-cookie'),
     'local-storage': createResult('local-storage'),
   };
@@ -180,6 +195,11 @@ const blockedErrorNames = new Set([
 
 type ResultCallback = (result: ProbeResult) => void;
 
+const TOP_LEVEL_CONTEXT: ProbeRunContext = {
+  kind: 'top-level',
+  isCrossSite: false,
+};
+
 @Injectable({ providedIn: 'root' })
 export class BrowserProbeService {
   constructor(
@@ -191,6 +211,7 @@ export class BrowserProbeService {
     webSocketUrl: string,
     prime: PrimeArtifacts | null,
     onResult: ResultCallback = () => undefined,
+    context: ProbeRunContext = TOP_LEVEL_CONTEXT,
   ): Promise<ProbeResultMap> {
     const running = createRunningResults();
     for (const definition of PROBE_DEFINITIONS) {
@@ -199,6 +220,7 @@ export class BrowserProbeService {
 
     const probes: Array<Promise<ProbeResult>> = [
       this.runWebSocketProbe(webSocketUrl),
+      Promise.resolve(this.runThirdPartyCookieProbe(prime, context)),
       Promise.resolve(this.runPartitionedCookieProbe(prime)),
       Promise.resolve(this.runLocalStorageProbe(prime)),
     ];
@@ -221,17 +243,26 @@ export class BrowserProbeService {
       runId,
       cookieName: `__Host-browser-tech-test-prime-${token}`,
       cookieValue: `first-party-${token}`,
+      thirdPartyCookieName: `__Host-browser-tech-test-third-party-prime-${token}`,
+      thirdPartyCookieValue: `first-party-${this.randomToken()}`,
       storageKey: `browser-tech-test:prime:${safeRunId}:${token}`,
       storageValue: `first-party-${this.randomToken()}`,
       cookiePrepared: false,
+      thirdPartyCookiePrepared: false,
       storagePrepared: false,
       errors: [],
     };
 
     if (!this.environment.isSecureContext()) {
       prime.errors.push('Cookie prime was not prepared because partitioned cookies require HTTPS.');
+      prime.errors.push(
+        'Third-party cookie prime was not prepared because SameSite=None cookies require HTTPS.',
+      );
     } else if (!this.environment.readCookie || !this.environment.writeCookie) {
       prime.errors.push('Cookie prime was not prepared because the cookie API is unavailable.');
+      prime.errors.push(
+        'Third-party cookie prime was not prepared because the cookie API is unavailable.',
+      );
     } else {
       try {
         this.setPartitionedCookie(prime.cookieName, prime.cookieValue);
@@ -241,6 +272,19 @@ export class BrowserProbeService {
         }
       } catch (error) {
         prime.errors.push(`Cookie prime failed: ${this.describeError(error)}`);
+      }
+
+      try {
+        this.setUnpartitionedCookie(prime.thirdPartyCookieName, prime.thirdPartyCookieValue);
+        prime.thirdPartyCookiePrepared =
+          this.readCookie(prime.thirdPartyCookieName) === prime.thirdPartyCookieValue;
+        if (!prime.thirdPartyCookiePrepared) {
+          prime.errors.push(
+            'The browser did not retain the first-party unpartitioned cookie seed.',
+          );
+        }
+      } catch (error) {
+        prime.errors.push(`Third-party cookie prime failed: ${this.describeError(error)}`);
       }
     }
 
@@ -265,6 +309,12 @@ export class BrowserProbeService {
   cleanupPrimeArtifacts(prime: PrimeArtifacts): void {
     try {
       this.deletePartitionedCookie(prime.cookieName);
+    } catch {
+      // Cleanup is best-effort and can be denied independently in embedded contexts.
+    }
+
+    try {
+      this.deleteUnpartitionedCookie(prime.thirdPartyCookieName);
     } catch {
       // Cleanup is best-effort and can be denied independently in embedded contexts.
     }
@@ -435,6 +485,167 @@ export class BrowserProbeService {
         );
       }
     });
+  }
+
+  private runThirdPartyCookieProbe(
+    prime: PrimeArtifacts | null,
+    context: ProbeRunContext,
+  ): ProbeResult {
+    const startedAt = this.environment.now();
+    const diagnostics: string[] = [];
+
+    if (!this.environment.isSecureContext()) {
+      return this.result(
+        'third-party-cookie',
+        'blocked',
+        'HTTPS required',
+        'Unpartitioned SameSite=None cookies cannot be tested in an insecure context.',
+        diagnostics,
+        startedAt,
+      );
+    }
+
+    if (!this.environment.readCookie || !this.environment.writeCookie) {
+      return this.result(
+        'third-party-cookie',
+        'unsupported',
+        'Cookie API unavailable',
+        'This context does not expose document.cookie.',
+        diagnostics,
+        startedAt,
+      );
+    }
+
+    const probeName = `__Host-browser-tech-test-third-party-probe-${this.randomToken()}`;
+    const probeValue = `roundtrip-${this.randomToken()}`;
+
+    try {
+      const firstPartyValue = prime?.thirdPartyCookiePrepared
+        ? this.readCookie(prime.thirdPartyCookieName)
+        : null;
+      this.setUnpartitionedCookie(probeName, probeValue);
+      const roundtripPassed = this.readCookie(probeName) === probeValue;
+
+      diagnostics.push(
+        roundtripPassed
+          ? 'A new unpartitioned SameSite=None cookie completed a write/read roundtrip.'
+          : 'A new unpartitioned SameSite=None cookie was not readable after writing.',
+      );
+
+      if (context.kind === 'top-level') {
+        return roundtripPassed
+          ? this.result(
+              'third-party-cookie',
+              'passed',
+              'First-party cookie roundtrip passed',
+              'An unpartitioned SameSite=None cookie can be written and read in the top-level context.',
+              diagnostics,
+              startedAt,
+            )
+          : this.result(
+              'third-party-cookie',
+              'blocked',
+              'Unpartitioned cookie unavailable',
+              'The browser did not retain the secure unpartitioned cookie in the top-level context.',
+              diagnostics,
+              startedAt,
+            );
+      }
+
+      if (!roundtripPassed) {
+        return this.result(
+          'third-party-cookie',
+          'blocked',
+          'Third-party cookie writes blocked',
+          'The embedded context could not retain a new unpartitioned SameSite=None cookie.',
+          diagnostics,
+          startedAt,
+        );
+      }
+
+      if (!context.isCrossSite) {
+        return this.result(
+          'third-party-cookie',
+          'inconclusive',
+          'Same-site iframe',
+          'The iframe shares the top-level site, so it does not exercise third-party cookie policy.',
+          diagnostics,
+          startedAt,
+        );
+      }
+
+      if (!prime) {
+        return this.result(
+          'third-party-cookie',
+          'inconclusive',
+          'First-party control unavailable',
+          'The embedded cookie roundtrip passed, but no first-party seed was available to test cross-context sharing.',
+          diagnostics,
+          startedAt,
+        );
+      }
+
+      diagnostics.push(...prime.errors.map((error) => `Prime: ${error}`));
+      if (!prime.thirdPartyCookiePrepared) {
+        return this.result(
+          'third-party-cookie',
+          'inconclusive',
+          'Cookie works; seed unavailable',
+          'The embedded cookie roundtrip passed, but first-party priming failed so third-party access cannot be classified.',
+          diagnostics,
+          startedAt,
+        );
+      }
+
+      if (firstPartyValue === prime.thirdPartyCookieValue) {
+        return this.result(
+          'third-party-cookie',
+          'shared',
+          'Unpartitioned cookie shared',
+          'The cross-site iframe read the JavaScript-visible first-party seed and roundtripped a new unpartitioned cookie.',
+          diagnostics,
+          startedAt,
+        );
+      }
+
+      if (firstPartyValue === null) {
+        return this.result(
+          'third-party-cookie',
+          'partitioned',
+          'Third-party cookie storage is isolated',
+          'The iframe can use an unpartitioned cookie in its own bucket but cannot read the first-party seed.',
+          diagnostics,
+          startedAt,
+        );
+      }
+
+      return this.result(
+        'third-party-cookie',
+        'inconclusive',
+        'First-party seed changed',
+        'A cookie was visible under the seed name, but it did not match the prepared first-party value.',
+        [...diagnostics, `Observed seed value: ${firstPartyValue}`],
+        startedAt,
+      );
+    } catch (error) {
+      const status = this.statusForError(error);
+      return this.result(
+        'third-party-cookie',
+        status,
+        status === 'blocked'
+          ? 'Third-party cookie access blocked'
+          : 'Third-party cookie probe failed',
+        'The context rejected unpartitioned cookie access before the probe could complete.',
+        [this.describeError(error)],
+        startedAt,
+      );
+    } finally {
+      try {
+        this.deleteUnpartitionedCookie(probeName);
+      } catch {
+        // The result already records access failures; cleanup remains best-effort.
+      }
+    }
   }
 
   private runPartitionedCookieProbe(prime: PrimeArtifacts | null): ProbeResult {
@@ -679,6 +890,19 @@ export class BrowserProbeService {
     this.environment.writeCookie?.(
       `${name}=; Path=/; Max-Age=0; SameSite=None; Secure; Partitioned`,
     );
+  }
+
+  private setUnpartitionedCookie(name: string, value: string): void {
+    if (!this.environment.writeCookie) {
+      throw new Error('Cookie writing is unavailable.');
+    }
+    this.environment.writeCookie(
+      `${name}=${encodeURIComponent(value)}; Path=/; Max-Age=600; SameSite=None; Secure`,
+    );
+  }
+
+  private deleteUnpartitionedCookie(name: string): void {
+    this.environment.writeCookie?.(`${name}=; Path=/; Max-Age=0; SameSite=None; Secure`);
   }
 
   private readCookie(name: string): string | null {

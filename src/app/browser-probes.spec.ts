@@ -4,6 +4,7 @@ import {
   createIdleResults,
   createRunningResults,
   PrimeArtifacts,
+  ProbeRunContext,
   ProbeWebSocket,
 } from './browser-probes';
 
@@ -37,16 +38,25 @@ class MemoryStorage implements Storage {
 
 class CookieJar {
   private readonly values = new Map<string, string>();
+  readonly writes: string[] = [];
+
+  constructor(private readonly allowUnpartitioned = true) {}
 
   read = (): string =>
     [...this.values.entries()].map(([name, value]) => `${name}=${value}`).join('; ');
 
   write = (serializedCookie: string): void => {
+    this.writes.push(serializedCookie);
     const [pair, ...attributes] = serializedCookie.split(';').map((part) => part.trim());
     const equalsIndex = pair.indexOf('=');
     const name = pair.slice(0, equalsIndex);
     const value = pair.slice(equalsIndex + 1);
     const shouldDelete = attributes.some((attribute) => attribute.toLowerCase() === 'max-age=0');
+    const isPartitioned = attributes.some((attribute) => attribute.toLowerCase() === 'partitioned');
+
+    if (!isPartitioned && !this.allowUnpartitioned) {
+      return;
+    }
 
     if (shouldDelete) {
       this.values.delete(name);
@@ -76,8 +86,10 @@ class FakeSocket implements ProbeWebSocket {
   close(): void {}
 }
 
-function environment(overrides: Partial<BrowserProbeEnvironment> = {}): BrowserProbeEnvironment {
-  const cookies = new CookieJar();
+function environment(
+  overrides: Partial<BrowserProbeEnvironment> = {},
+  cookies = new CookieJar(),
+): BrowserProbeEnvironment {
   const storage = new MemoryStorage();
   let clock = 100;
   let uuid = 0;
@@ -98,12 +110,22 @@ function environment(overrides: Partial<BrowserProbeEnvironment> = {}): BrowserP
   };
 }
 
+const CROSS_SITE_EMBEDDED_CONTEXT: ProbeRunContext = {
+  kind: 'embedded',
+  isCrossSite: true,
+};
+
 describe('browser probe result factories', () => {
   it('creates complete idle and running maps', () => {
     const idle = createIdleResults();
     const running = createRunningResults();
 
-    expect(Object.keys(idle)).toEqual(['websocket', 'partitioned-cookie', 'local-storage']);
+    expect(Object.keys(idle)).toEqual([
+      'websocket',
+      'third-party-cookie',
+      'partitioned-cookie',
+      'local-storage',
+    ]);
     expect(Object.values(idle).every((result) => result.status === 'idle')).toBe(true);
     expect(Object.values(running).every((result) => result.status === 'running')).toBe(true);
     expect(idle.websocket).not.toBe(running.websocket);
@@ -125,6 +147,7 @@ describe('BrowserProbeService', () => {
 
     expect(results.websocket.status).toBe('passed');
     expect(results.websocket.summary).toBe('Exact echo received');
+    expect(results['third-party-cookie'].status).toBe('passed');
     expect(results['local-storage'].status).toBe('passed');
     expect(results['partitioned-cookie'].status).toBe('inconclusive');
     expect(emissions).toContain('websocket:running');
@@ -154,10 +177,17 @@ describe('BrowserProbeService', () => {
     const service = new BrowserProbeService(probeEnvironment);
     const prime = await service.createPrimeArtifacts('shared-run');
 
-    const results = await service.runAll('wss://echo.example.test', prime);
+    const results = await service.runAll(
+      'wss://echo.example.test',
+      prime,
+      undefined,
+      CROSS_SITE_EMBEDDED_CONTEXT,
+    );
 
     expect(prime.cookiePrepared).toBe(true);
+    expect(prime.thirdPartyCookiePrepared).toBe(true);
     expect(prime.storagePrepared).toBe(true);
+    expect(results['third-party-cookie'].status).toBe('shared');
     expect(results['partitioned-cookie'].status).toBe('shared');
     expect(results['local-storage'].status).toBe('shared');
   });
@@ -167,8 +197,14 @@ describe('BrowserProbeService', () => {
     const prime = await firstPartyService.createPrimeArtifacts('partitioned-run');
     const embeddedService = new BrowserProbeService(environment());
 
-    const results = await embeddedService.runAll('wss://echo.example.test', prime);
+    const results = await embeddedService.runAll(
+      'wss://echo.example.test',
+      prime,
+      undefined,
+      CROSS_SITE_EMBEDDED_CONTEXT,
+    );
 
+    expect(results['third-party-cookie'].status).toBe('partitioned');
     expect(results['partitioned-cookie'].status).toBe('partitioned');
     expect(results['local-storage'].status).toBe('partitioned');
   });
@@ -201,6 +237,7 @@ describe('BrowserProbeService', () => {
     const results = await service.runAll('wss://echo.example.test', null);
 
     expect(results['partitioned-cookie'].status).toBe('blocked');
+    expect(results['third-party-cookie'].status).toBe('blocked');
     expect(results['local-storage'].status).toBe('blocked');
     expect(results['partitioned-cookie'].diagnostics[0]).toContain('SecurityError');
   });
@@ -219,8 +256,9 @@ describe('BrowserProbeService', () => {
     const prime = await service.createPrimeArtifacts('blocked-run');
 
     expect(prime.cookiePrepared).toBe(false);
+    expect(prime.thirdPartyCookiePrepared).toBe(false);
     expect(prime.storagePrepared).toBe(false);
-    expect(prime.errors).toHaveLength(2);
+    expect(prime.errors).toHaveLength(3);
     expect(prime.errors.join(' ')).toContain('HTTPS');
     expect(prime.errors.join(' ')).toContain('SecurityError');
   });
@@ -233,6 +271,7 @@ describe('BrowserProbeService', () => {
     service.cleanupPrimeArtifacts(prime);
 
     expect(probeEnvironment.readCookie?.()).not.toContain(`${prime.cookieName}=`);
+    expect(probeEnvironment.readCookie?.()).not.toContain(`${prime.thirdPartyCookieName}=`);
     expect(probeEnvironment.getLocalStorage()?.getItem(prime.storageKey)).toBeNull();
   });
 
@@ -242,16 +281,111 @@ describe('BrowserProbeService', () => {
       runId: 'failed-prime',
       cookieName: '__Host-browser-tech-test-prime-missing',
       cookieValue: 'missing',
+      thirdPartyCookieName: '__Host-browser-tech-test-third-party-prime-missing',
+      thirdPartyCookieValue: 'missing',
       storageKey: 'browser-tech-test:prime:missing',
       storageValue: 'missing',
       cookiePrepared: false,
+      thirdPartyCookiePrepared: false,
       storagePrepared: false,
       errors: ['The first-party setup was blocked.'],
     };
 
-    const results = await service.runAll('wss://echo.example.test', prime);
+    const results = await service.runAll(
+      'wss://echo.example.test',
+      prime,
+      undefined,
+      CROSS_SITE_EMBEDDED_CONTEXT,
+    );
 
+    expect(results['third-party-cookie'].status).toBe('inconclusive');
     expect(results['partitioned-cookie'].status).toBe('inconclusive');
     expect(results['local-storage'].status).toBe('inconclusive');
+  });
+
+  it('does not claim third-party access without a first-party control', async () => {
+    const service = new BrowserProbeService(environment());
+
+    const results = await service.runAll(
+      'wss://echo.example.test',
+      null,
+      undefined,
+      CROSS_SITE_EMBEDDED_CONTEXT,
+    );
+
+    expect(results['third-party-cookie'].status).toBe('inconclusive');
+    expect(results['third-party-cookie'].detail).toContain('no first-party seed');
+  });
+
+  it('does not treat a same-site iframe as a third-party cookie test', async () => {
+    const probeEnvironment = environment();
+    const service = new BrowserProbeService(probeEnvironment);
+    const prime = await service.createPrimeArtifacts('same-origin-run');
+
+    const results = await service.runAll('wss://echo.example.test', prime, undefined, {
+      kind: 'embedded',
+      isCrossSite: false,
+    });
+
+    expect(results['third-party-cookie'].status).toBe('inconclusive');
+    expect(results['third-party-cookie'].summary).toBe('Same-site iframe');
+  });
+
+  it('treats a changed first-party cookie seed as inconclusive', async () => {
+    const probeEnvironment = environment();
+    const service = new BrowserProbeService(probeEnvironment);
+    const prime = await service.createPrimeArtifacts('changed-seed-run');
+    probeEnvironment.writeCookie?.(
+      `${prime.thirdPartyCookieName}=changed; Path=/; Max-Age=600; SameSite=None; Secure`,
+    );
+
+    const results = await service.runAll(
+      'wss://echo.example.test',
+      prime,
+      undefined,
+      CROSS_SITE_EMBEDDED_CONTEXT,
+    );
+
+    expect(results['third-party-cookie'].status).toBe('inconclusive');
+    expect(results['third-party-cookie'].summary).toBe('First-party seed changed');
+    expect(results['third-party-cookie'].diagnostics).toContain('Observed seed value: changed');
+  });
+
+  it('reports third-party cookies as blocked when unpartitioned writes are rejected', async () => {
+    const firstPartyService = new BrowserProbeService(environment());
+    const prime = await firstPartyService.createPrimeArtifacts('blocked-third-party-run');
+    const blockedCookies = new CookieJar(false);
+    const embeddedService = new BrowserProbeService(environment({}, blockedCookies));
+
+    const results = await embeddedService.runAll(
+      'wss://echo.example.test',
+      prime,
+      undefined,
+      CROSS_SITE_EMBEDDED_CONTEXT,
+    );
+
+    expect(results['third-party-cookie'].status).toBe('blocked');
+    expect(results['partitioned-cookie'].status).toBe('partitioned');
+    expect(results['third-party-cookie'].summary).toBe('Third-party cookie writes blocked');
+  });
+
+  it('uses unpartitioned SameSite=None cookies for the third-party probe', async () => {
+    const cookies = new CookieJar();
+    const service = new BrowserProbeService(environment({}, cookies));
+    const prime = await service.createPrimeArtifacts('cookie-attributes-run');
+
+    await service.runAll('wss://echo.example.test', prime, undefined, CROSS_SITE_EMBEDDED_CONTEXT);
+
+    const thirdPartyWrites = cookies.writes.filter(
+      (cookie) =>
+        cookie.includes('browser-tech-test-third-party') && cookie.includes('Max-Age=600'),
+    );
+    expect(thirdPartyWrites.length).toBeGreaterThanOrEqual(2);
+    thirdPartyWrites.forEach((cookie) => {
+      expect(cookie).toContain('SameSite=None');
+      expect(cookie).toContain('Secure');
+      expect(cookie).not.toMatch(/;\s*Partitioned(?:;|$)/);
+    });
+    expect(cookies.read()).not.toContain('browser-tech-test-third-party-probe');
   });
 });

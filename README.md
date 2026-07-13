@@ -1,12 +1,15 @@
 # Browser technology context test
 
 An Angular test bench for comparing browser capabilities in the top-level page
-and in an iframe. Each context runs the same three probes and reports its result
+and in an iframe. Each context runs the same four probes and reports its result
 independently:
 
 - **WebSocket** opens Postman's public
   [`wss://ws.postman-echo.com/raw`](https://learning.postman.com/docs/developer/echo-api)
   endpoint, sends a unique value, and verifies the echoed response.
+- **Third-party cookie** seeds an unpartitioned `SameSite=None; Secure` cookie
+  while the iframe origin is first-party, then checks whether the embedded
+  context can read that seed and round-trip a new unpartitioned cookie.
 - **Partitioned cookie** writes, reads, and removes a short-lived secure cookie
   with `SameSite=None` and `Partitioned`.
 - **Local storage** writes, reads, and removes a unique `localStorage` value.
@@ -57,12 +60,26 @@ The target should host the same built artifact so it can run the frame view and
 return the expected result messages.
 
 When the configured iframe has a different origin, starting a run opens that
-deployment briefly as a first-party control. The control seeds a short-lived
-partitioned cookie and a namespaced local-storage value, then the iframe checks
-whether those seeds are shared or isolated. The control removes both values and
-closes after the run. If the browser blocks the control window, the app still
-runs basic read/write probes and reports the partition comparison as
-inconclusive.
+deployment briefly as a first-party control. The control seeds short-lived
+unpartitioned and partitioned cookies plus a namespaced local-storage value,
+then the iframe checks whether those seeds are shared or isolated. The control
+removes the values and closes after the run. If the browser blocks the control
+window, the app still runs basic read/write probes, but cross-context comparisons
+may be inconclusive.
+
+### Third-party-cookie limitation
+
+The third-party-cookie probe tests the current iframe's access to
+JavaScript-visible, unpartitioned cookies. A matching first-party seed plus a
+successful embedded write reports shared access. A successful write with the
+seed hidden reports isolated storage, while a rejected write reports blocked
+access.
+
+The default iframe is same-origin and therefore cannot exercise third-party
+cookie policy. Configure the iframe on a genuinely cross-site deployment for a
+meaningful result; merely changing the origin can still leave two hosts on the
+same site. Because this app is static, it does not test cookies attached to HTTP
+requests or `HttpOnly` cookies.
 
 ### Partitioned-cookie limitation
 

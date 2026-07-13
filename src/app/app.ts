@@ -29,6 +29,7 @@ import {
   isPrimeReadyMessage,
   protocolMessage,
 } from './frame-protocol';
+import { isCrossSite } from './site';
 
 type AppMode = 'host' | 'frame' | 'prime';
 
@@ -104,9 +105,14 @@ export class App implements OnInit {
     this.sanitizer.bypassSecurityTrustResourceUrl(this.frameSrc()),
   );
   protected readonly frameOrigin = computed(() => safeOrigin(this.frameSrc()));
-  protected readonly contextRelationship = computed(() =>
-    this.frameOrigin() === window.location.origin ? 'Same origin' : 'Cross origin',
-  );
+  protected readonly contextRelationship = computed(() => {
+    if (this.frameOrigin() === window.location.origin) {
+      return 'Same origin';
+    }
+    return isCrossSite(window.location.origin, this.frameOrigin())
+      ? 'Cross site'
+      : 'Same site, cross origin';
+  });
   protected readonly secureContextLabel = window.isSecureContext ? 'Secure context' : 'Not secure';
   protected readonly browserLabel = detectBrowser();
   protected readonly locationOrigin = window.location.origin;
@@ -270,6 +276,9 @@ export class App implements OnInit {
     if (outside.status === 'running' || inside.status === 'running') {
       return { label: 'Running', detail: 'Waiting for both contexts', tone: 'running' };
     }
+    if (id === 'third-party-cookie') {
+      return this.thirdPartyCookieComparison(inside);
+    }
     if (inside.status === 'partitioned') {
       return {
         label: 'Partitioned',
@@ -305,6 +314,50 @@ export class App implements OnInit {
     return {
       label: 'Different result',
       detail: `${outside.summary} / ${inside.summary}`,
+      tone: inside.status,
+    };
+  }
+
+  private thirdPartyCookieComparison(inside: ProbeResult): Comparison {
+    if (!isCrossSite(window.location.origin, this.frameOrigin())) {
+      return {
+        label: 'Same-site control',
+        detail: 'Configure a cross-site iframe to exercise third-party cookie policy',
+        tone: 'inconclusive',
+      };
+    }
+    if (inside.status === 'shared') {
+      return {
+        label: 'JavaScript access available',
+        detail: 'The iframe read and wrote the JavaScript-visible unpartitioned cookie',
+        tone: 'shared',
+      };
+    }
+    if (inside.status === 'partitioned') {
+      return {
+        label: 'Isolated in iframe',
+        detail: 'Cookie writes work, but the first-party cookie is not visible',
+        tone: 'partitioned',
+      };
+    }
+    if (inside.status === 'blocked') {
+      return {
+        label: 'Blocked in iframe',
+        detail: inside.summary,
+        tone: 'blocked',
+      };
+    }
+    if (inside.status === 'inconclusive') {
+      return {
+        label: 'Inconclusive',
+        detail: inside.summary,
+        tone: 'inconclusive',
+      };
+    }
+
+    return {
+      label: inside.status === 'unsupported' ? 'Unsupported' : 'Probe failed',
+      detail: inside.summary,
       tone: inside.status,
     };
   }
@@ -369,8 +422,14 @@ export class App implements OnInit {
 
     this.auxiliaryResults.set(createRunningResults());
     void this.probes
-      .runAll(message.webSocketUrl, message.prime, (result) =>
-        this.setResult(this.auxiliaryResults, result),
+      .runAll(
+        message.webSocketUrl,
+        message.prime,
+        (result) => this.setResult(this.auxiliaryResults, result),
+        {
+          kind: 'embedded',
+          isCrossSite: message.isCrossSite,
+        },
       )
       .then((results) => {
         window.parent.postMessage(
@@ -501,6 +560,7 @@ export class App implements OnInit {
         type: 'frame-run',
         runId,
         webSocketUrl: this.appliedWebSocketUrl(),
+        isCrossSite: isCrossSite(window.location.origin, this.frameOrigin()),
         prime,
       }),
       this.frameOrigin(),
@@ -590,6 +650,8 @@ const DIAGNOSTIC_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
 });
 
 const DIAGNOSTIC_TARGETS: Record<Exclude<ProbeId, 'websocket'>, string> = {
+  'third-party-cookie':
+    'JavaScript-visible unpartitioned SameSite=None cookie write, read, removal, and first-party seed visibility',
   'partitioned-cookie':
     'Secure partitioned cookie write, read, removal, and first-party seed visibility',
   'local-storage': 'Local storage write, read, overwrite, removal, and first-party seed visibility',
@@ -671,6 +733,7 @@ function unavailableResults(detail: string): ProbeResultMap {
 
   return {
     websocket: result('websocket'),
+    'third-party-cookie': result('third-party-cookie'),
     'partitioned-cookie': result('partitioned-cookie'),
     'local-storage': result('local-storage'),
   };

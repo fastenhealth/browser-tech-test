@@ -20,7 +20,8 @@ describe('App', () => {
     await fixture.whenStable();
     const compiled = fixture.nativeElement as HTMLElement;
     expect(compiled.querySelector('h1')?.textContent).toContain('Browser Context Lab');
-    expect(compiled.querySelectorAll('.matrix-row')).toHaveLength(3);
+    expect(compiled.querySelectorAll('.matrix-row')).toHaveLength(4);
+    expect(compiled.querySelector('[data-probe="third-party-cookie"]')).not.toBeNull();
   });
 
   it('should expose canonical probe statuses for browser tests', async () => {
@@ -43,7 +44,7 @@ describe('App', () => {
     const compiled = fixture.nativeElement as HTMLElement;
     const statuses = compiled.querySelectorAll<HTMLElement>('.status');
 
-    expect(statuses).toHaveLength(9);
+    expect(statuses).toHaveLength(12);
     statuses.forEach((status) => {
       expect(status.title).toBe('This test has not been run yet.');
     });
@@ -102,5 +103,42 @@ describe('App', () => {
     expect(emptyDiagnostics?.textContent).toContain(
       'No additional browser messages were reported.',
     );
+  });
+
+  it('should not classify a same-site iframe as a third-party cookie success', async () => {
+    const fixture = TestBed.createComponent(App);
+    await fixture.whenStable();
+    const compiled = fixture.nativeElement as HTMLElement;
+    const hostResults = createIdleResults();
+    const frameResults = createIdleResults();
+
+    hostResults['third-party-cookie'] = {
+      ...hostResults['third-party-cookie'],
+      status: 'passed',
+      summary: 'First-party cookie roundtrip passed',
+      detail: 'The top-level baseline passed.',
+    };
+    frameResults['third-party-cookie'] = {
+      ...frameResults['third-party-cookie'],
+      status: 'shared',
+      summary: 'Third-party cookie available',
+      detail: 'The iframe observed the seed.',
+    };
+    const component = fixture.componentInstance as unknown as {
+      hostResults: { set(results: ProbeResultMap): void };
+      frameResults: { set(results: ProbeResultMap): void };
+    };
+    component.hostResults.set(hostResults);
+    component.frameResults.set(frameResults);
+    fixture.detectChanges();
+
+    const comparison = compiled.querySelector(
+      '[data-testid="third-party-cookie-comparison-status"]',
+    );
+    const row = compiled.querySelector('[data-probe="third-party-cookie"]');
+
+    expect(comparison?.getAttribute('data-status')).toBe('inconclusive');
+    expect(row?.textContent).toContain('Same-site control');
+    expect(row?.textContent).toContain('Configure a cross-site iframe');
   });
 });
