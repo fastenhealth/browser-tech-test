@@ -2,11 +2,8 @@
   <header class="app-header">
     <div class="header-inner">
       <div class="brand-lockup">
-        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
-        <div>
-          <p class="eyebrow">Fasten Connect diagnostics</p>
-          <h1>Browser Context Lab</h1>
-        </div>
+        <span class="az-logo">fasten</span>
+        <span class="shell-context">Connect diagnostics</span>
       </div>
       <div class="header-actions">
         <button class="button button-secondary" type="button" (click)="copyReport()">
@@ -26,6 +23,11 @@
   </header>
 
   <main>
+    <section class="page-intro" aria-labelledby="page-title">
+      <p class="section-kicker">Fasten Connect diagnostics</p>
+      <h1 id="page-title">Browser Context Lab</h1>
+    </section>
+
     <section class="environment-band" aria-label="Test environment">
       <div class="environment-grid">
         <div class="environment-item">
@@ -187,7 +189,9 @@
               spellcheck="false"
               required
             />
-            <button class="button button-dark" type="submit" [disabled]="isRunning()">Apply</button>
+            <button class="button button-primary" type="submit" [disabled]="isRunning()">
+              Apply
+            </button>
           </div>
           @if (configurationIssue()) {
             <p class="form-error" role="alert">{{ configurationIssue() }}</p>
@@ -225,7 +229,7 @@
 } @else if (mode === 'frame') {
   <main class="runner-page">
     <header class="runner-header">
-      <span class="brand-mark brand-mark-small" aria-hidden="true"><i></i><i></i><i></i></span>
+      <span class="az-logo az-logo-compact">fasten</span>
       <div>
         <p>Embedded context</p>
         <h1>Iframe runner</h1>
@@ -257,10 +261,12 @@
   </main>
 } @else {
   <main class="prime-page">
-    <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+    <span class="az-logo">fasten</span>
     <p class="section-kicker">Browser Context Lab</p>
     <h1>First-party control</h1>
     <p class="prime-state">{{ primeState() }}</p>
-    <button class="button button-dark" type="button" (click)="closePrime()">Close control</button>
+    <button class="button button-primary" type="button" (click)="closePrime()">
+      Close control
+    </button>
   </main>
 }
